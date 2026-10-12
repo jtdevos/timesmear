@@ -3,6 +3,13 @@
 A **time displacement** video effect. Every pixel of the output shows that same pixel from some
 moment in the past, and a grayscale mask decides how far back each one looks.
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Before and after: the original Tears of Steel footage on top, and below it the same shots dissolving into each other through cloudy plasma-shaped patches" width="480">
+  <br>
+  <sub>Top: original. Bottom: <code>mask-plasma.png</code>, 1.5 s window.
+  Footage from <a href="https://mango.blender.org/"><i>Tears of Steel</i></a> © Blender Foundation, CC-BY.</sub>
+</p>
+
 ```
 mask pixel   black ──────────── gray ──────────── white
 shows        now          window/2 seconds ago    window seconds ago
@@ -220,3 +227,6 @@ The reference clips aren't included in this repo. `bootstrap.sh` downloads excer
 - *Spring* (2019), © Blender Animation Studio, [studio.blender.org](https://studio.blender.org/films/spring/)
 
 If you publish renders made from them, credit the original film.
+
+The demo GIF, `docs/demo.gif`, is made from *Tears of Steel* footage and is shared under the
+same CC-BY license.
