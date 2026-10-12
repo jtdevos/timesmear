@@ -25,7 +25,7 @@ grows outward from the middle as an expanding circle:
 <p align="center">
   <img src="docs/demo-dance.gif" alt="Before and after: a dancer in a studio on the left, and on the right the same footage where a cut from a wide shot to a close-up opens as an expanding circle and her moving limbs leave rippled trails" width="540">
   <br>
-  <sub>Left: original. Right: radial mask (<code>makemask.py radial 720 1280</code>), 1 s window.
+  <sub>Left: original. Right: radial mask (the default), 1 s window.
   Dance footage by Dana Margalit (<a href="https://www.tiktok.com/@d.margalit">@d.margalit</a> on TikTok).</sub>
 </p>
 
@@ -34,6 +34,7 @@ grows outward from the middle as an expanding circle:
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
+- [Color masks](#color-masks): per-channel delays
 - [timedisplace.py](#timedisplacepy): apply the effect
 - [makemask.py](#makemaskpy): generate masks
 - [bootstrap.sh](#bootstrapsh): fetch reference clips
@@ -62,11 +63,12 @@ brew install uv ffmpeg
 git clone https://github.com/jtdevos/timesmear.git
 cd timesmear
 ./bootstrap.sh
-uv run timedisplace.py resources/tears-of-steel.webm resources/mask-plasma.png 1.5
+uv run timedisplace.py resources/tears-of-steel.webm 1.5 -t plasma
 ```
 
-`bootstrap.sh` downloads three short reference clips and generates the default masks. The last
-command writes `resources/tears-of-steel_displaced.mp4`.
+`bootstrap.sh` downloads three short reference clips and generates a set of mask images. The
+last command generates a plasma mask at the video's size and writes
+`resources/tears-of-steel_displaced.mp4`.
 
 Every command prints full help with `-h`, or when you run it with no arguments.
 
@@ -90,17 +92,42 @@ output = input[t - delay][y, x]
 - **Past only:** pixels never look into the future, which keeps memory bounded and would also
   work for live input.
 
+## Color masks
+
+A color mask gives each color channel its own delay. The red channel of the mask sets how far
+back the video's red channel looks, green sets green's delay, and blue sets blue's:
+
+```
+output.red   = input[t - mask.red   * window * fps].red
+output.green = input[t - mask.green * window * fps].green
+output.blue  = input[t - mask.blue  * window * fps].blue
+```
+
+Wherever something moves, its red, green and blue copies separate into colored ghosts (magenta,
+cyan and yellow fringes and trails), and they come back together once the motion stops. Still
+areas look untouched.
+
+- `-t color-plasma` generates a separate plasma cloud for each channel, so the color split
+  varies across the frame.
+- You can paint one too. Pure black is "now" for every channel; pure red delays only the red
+  channel by the full window; white delays all three equally, the same as a grayscale mask.
+- A mask whose channels are all equal (any gray image, even if saved as RGB) is treated as
+  grayscale and processed the usual way.
+
 ## timedisplace.py
 
 ```bash
-uv run timedisplace.py INPUT MASK WINDOW [options]
+uv run timedisplace.py INPUT WINDOW [-m MASK | -t TYPE] [options]
 ```
 
 | Argument | Meaning |
 |---|---|
 | `INPUT` | Any video ffmpeg can read: mp4, webm, mkv, mov, … |
-| `MASK` | Grayscale image, ideally an 8- or 16-bit PNG. If it's a different size from the video, it's stretched to fit. |
 | `WINDOW` | Delay in seconds for a pure white mask pixel |
+| `-m, --mask` | Mask image, grayscale or [color](#color-masks), ideally a 16-bit PNG. If it's a different size from the video, it's stretched to fit. |
+| `-t, --mask-type` | Generate a mask at the video's size instead: `horizontal`, `vertical`, `radial`, `noise`, `plasma` or `color-plasma` (see [makemask.py](#makemaskpy)). If neither `-m` nor `-t` is given, you get `radial`. |
+| `--seed` | Random seed for the `noise`, `plasma` and `color-plasma` types. Without it, a random seed is chosen and printed so you can reproduce a result you like. |
+| `--roughness` | Detail level for the `plasma` and `color-plasma` types, from 0 to 1 (default 0.5) |
 | `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC. Defaults to `<input>_displaced.mp4` next to the input. |
 | `--fast` | Use the nearest frame instead of blending two |
 | `--preview` | Show the output in a window while rendering (press `q` to stop) |
@@ -121,12 +148,16 @@ uv run makemask.py PATTERN WIDTH HEIGHT [-o mask.png] [--invert] [--seed N] [--r
 | `radial` | center→corners | Center is live and edges trail behind, like a tunnel |
 | `noise` | soft random blobs | Patchy, uneven lag |
 | `plasma` | cloudy fractal | Organic, smoky dissolves, especially at scene cuts |
+| `color-plasma` | three plasma clouds, one per channel | Red, green and blue drift apart into colored ghosts ([color masks](#color-masks)) |
 
 | Option | Meaning |
 |---|---|
 | `--invert` | Swap black and white, so a radial mask lags at the center instead |
-| `--seed N` | Make `noise` and `plasma` reproducible |
-| `--roughness R` | Plasma only, from 0 to 1 (default 0.5). Low gives big soft blobs; high gives fine, grainy clouds. |
+| `--seed N` | Make `noise`, `plasma` and `color-plasma` reproducible |
+| `--roughness R` | For `plasma` and `color-plasma`, from 0 to 1 (default 0.5). Low gives big soft blobs; high gives fine, grainy clouds. |
+
+Use `makemask.py` when you want to keep a mask, edit it by hand, or reuse it across videos.
+For one-off renders, `timedisplace.py -t` generates the same patterns on the fly.
 
 Masks are saved as 16-bit PNGs, because 8 bits gives only 256 delay steps, which can show up as
 banding with long windows. You can also paint a mask in any image editor: black means now and
@@ -162,21 +193,24 @@ renders and personal footage can't be committed by accident.
 ## Recipes
 
 ```bash
+# Center stays live, edges trail behind (the default radial mask)
+uv run timedisplace.py resources/spring.webm 1
+
 # Slit-scan smear: the left edge is live, the right edge lags 2 seconds
-uv run timedisplace.py resources/big-buck-bunny.webm resources/mask-horizontal.png 2
+uv run timedisplace.py resources/big-buck-bunny.webm 2 -t horizontal
 
 # Plasma dissolves through scene cuts, saved as WebM
-uv run timedisplace.py resources/tears-of-steel.webm resources/mask-plasma.png 1.5 -o out/tos.webm
+uv run timedisplace.py resources/tears-of-steel.webm 1.5 -t plasma -o out/tos.webm
 
-# Center stays live, edges trail behind
-uv run timedisplace.py resources/spring.webm resources/mask-radial.png 1
+# Red, green and blue drift apart into colored ghosts
+uv run timedisplace.py resources/big-buck-bunny.webm 1 -t color-plasma --seed 7
 
 # Inverted fine plasma with a long window, for a dreamy, ghostly look
 uv run makemask.py plasma 1920 1080 --roughness 0.7 --invert --seed 3 -o resources/mask-ghost.png
-uv run timedisplace.py resources/spring.webm resources/mask-ghost.png 3
+uv run timedisplace.py resources/spring.webm 3 -m resources/mask-ghost.png
 
 # Try out settings live before committing to a full render
-uv run timedisplace.py resources/spring.webm resources/mask-plasma.png 1 --fast --preview --no-output
+uv run timedisplace.py resources/spring.webm 1 -t plasma --fast --preview --no-output
 
 # Cut a short test clip from a long video (instant, with no re-encode)
 mkdir -p clips
