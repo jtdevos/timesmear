@@ -19,6 +19,16 @@ Paint the mask with a left-to-right gradient and moving objects stretch and lean
 slit-scan look. Use a cloudy plasma mask and scene cuts dissolve through the frame in organic
 patches, with part of the picture still in the old shot while the rest has moved on.
 
+A radial mask keeps the center live while the edges trail behind. At a cut, the new shot
+grows outward from the middle as an expanding circle:
+
+<p align="center">
+  <img src="docs/demo-dance.gif" alt="Before and after: a dancer in a studio on the left, and on the right the same footage where a cut from a wide shot to a close-up opens as an expanding circle and her moving limbs leave rippled trails" width="540">
+  <br>
+  <sub>Left: original. Right: radial mask (<code>makemask.py radial 720 1280</code>), 1 s window.
+  Dance footage by Dana Margalit (<a href="https://www.tiktok.com/@d.margalit">@d.margalit</a> on TikTok).</sub>
+</p>
+
 ## Contents
 
 - [Requirements](#requirements)
@@ -230,3 +240,7 @@ If you publish renders made from them, credit the original film.
 
 The demo GIF, `docs/demo.gif`, is made from *Tears of Steel* footage and is shared under the
 same CC-BY license.
+
+The dance demo, `docs/demo-dance.gif`, uses footage by Dana Margalit
+([@d.margalit](https://www.tiktok.com/@d.margalit) on TikTok). The original video isn't
+included in this repo.
