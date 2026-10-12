@@ -2,14 +2,29 @@
 # requires-python = ">=3.10,<3.14"
 # dependencies = ["opencv-python", "numpy"]
 # ///
-"""Time displacement effect.
+"""timesmear: time displacement video effect.
 
-Each output pixel shows the input pixel from some time in the past:
+Each output pixel shows the same pixel from some time in the past:
 
-    offset_seconds = mask[y, x] * window
+    delay_seconds = mask[y, x] * window
 
-where mask is a grayscale image (black = 0 = now, white = 1 = `window` seconds ago).
+where mask is a grayscale image: black = now, white = `window` seconds ago, grays in between.
 Before enough history exists, pixels clamp to the first frame of the video.
+"""
+
+EXAMPLES = """\
+examples:
+  # smear across the frame: left edge is live, right edge lags 2 seconds
+  uv run timedisplace.py in.webm resources/mask-horizontal.png 2
+
+  # plasma clouds, written as WebM
+  uv run timedisplace.py in.webm resources/mask-plasma.png 1.5 -o out.webm
+
+  # quick look at a setting without writing a file
+  uv run timedisplace.py in.webm resources/mask-radial.png 1 --fast --preview --no-output
+
+masks: make them with makemask.py, or paint one and save it as a grayscale PNG.
+A mask of a different size is stretched to fit the video.
 """
 
 import argparse
@@ -92,15 +107,25 @@ def mux_audio(video_only, original, dest):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("input", type=Path, help="input video")
-    p.add_argument("mask", type=Path, help="grayscale mask image, same size as the video")
-    p.add_argument("window", type=float, help="time window in seconds (offset for a white pixel)")
-    p.add_argument("-o", "--output", type=Path, help="output video (default: <input>_displaced.mp4)")
-    p.add_argument("--fast", action="store_true", help="use nearest frame instead of blending")
-    p.add_argument("--preview", action="store_true", help="show frames in a window while processing (q to quit)")
-    p.add_argument("--no-output", action="store_true", help="preview only, don't write a file")
+    p = argparse.ArgumentParser(description=__doc__, epilog=EXAMPLES,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("input", type=Path, help="input video (anything ffmpeg can read: mp4, webm, mkv, mov, ...)")
+    p.add_argument("mask", type=Path, help="grayscale mask image (8- or 16-bit PNG recommended)")
+    p.add_argument("window", type=float, help="delay in seconds for a white mask pixel")
+    p.add_argument("-o", "--output", type=Path,
+                   help="output video; .webm gives VP9/Opus, anything else H.264/AAC "
+                        "(default: <input>_displaced.mp4)")
+    p.add_argument("--fast", action="store_true", help="use the nearest frame instead of blending two (about 2x faster)")
+    p.add_argument("--preview", action="store_true", help="show frames in a window while rendering (q to quit)")
+    p.add_argument("--no-output", action="store_true", help="with --preview: don't write a file")
+    if len(sys.argv) == 1:
+        p.print_help()
+        sys.exit(0)
     args = p.parse_args()
+    if args.no_output and not args.preview:
+        p.error("--no-output only makes sense with --preview")
+    if args.window <= 0:
+        p.error("window must be greater than 0")
 
     cap = cv2.VideoCapture(str(args.input))
     if not cap.isOpened():
@@ -118,6 +143,7 @@ def main():
     write = not args.no_output
     if write:
         output = args.output or args.input.with_name(f"{args.input.stem}_displaced.mp4")
+        output.parent.mkdir(parents=True, exist_ok=True)
         tmpdir = tempfile.mkdtemp()
         raw_path = Path(tmpdir) / "raw.mp4"
         writer = cv2.VideoWriter(str(raw_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))

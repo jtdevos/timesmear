@@ -4,6 +4,23 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+if [[ $# -gt 0 ]]; then
+    cat <<'EOF'
+usage: ./bootstrap.sh
+
+Downloads the reference clips listed in resources/videos.txt (plus your own in
+resources/videos.local.txt, if present) and generates the default masks
+(mask-horizontal/vertical/radial/plasma.png) into resources/.
+
+Anything already present is skipped, so it's safe to re-run. Delete a file to
+fetch or regenerate it.
+
+videos.txt format, one per line:
+  <name>  <url>  [start-end]      e.g.  my-clip  https://youtu.be/...  1:30-2:30
+EOF
+    [[ "$1" == "-h" || "$1" == "--help" ]] && exit 0 || exit 2
+fi
+
 for tool in uv ffmpeg; do
     command -v "$tool" >/dev/null || { echo "missing required tool: $tool (try: brew install $tool)" >&2; exit 1; }
 done
