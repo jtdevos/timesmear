@@ -1,0 +1,12 @@
+# Reference videos downloaded by ./bootstrap.sh into resources/.
+#
+# Format: <name>  <url>  [section]
+#   section is an optional start-end range (e.g. 6:40-7:40) so only that clip is downloaded.
+#
+# These are Blender open movies, licensed CC-BY (https://studio.blender.org/films/).
+# For personal videos you don't want in the repo, add lines to resources/videos.local.txt
+# (same format; that file is gitignored).
+
+big-buck-bunny   https://www.youtube.com/watch?v=aqz-KE-bpKQ   6:40-7:40
+tears-of-steel   https://www.youtube.com/watch?v=R6MlUcmOul8   7:00-8:00
+spring           https://www.youtube.com/watch?v=WhWc3b3KhnY   4:00-5:00

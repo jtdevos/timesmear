@@ -1,0 +1,19 @@
+# resources/ holds downloaded videos and generated masks; only the download list is tracked.
+# Put personal (e.g. copyrighted) video URLs in resources/videos.local.txt.
+resources/*
+!resources/videos.txt
+
+# Never commit video files, wherever they end up (renders, test clips, etc.).
+*.webm
+*.mp4
+*.mkv
+*.mov
+*.m4v
+*.avi
+*.part
+clips/
+out/
+
+__pycache__/
+.venv/
+.DS_Store
