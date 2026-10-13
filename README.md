@@ -116,6 +116,10 @@ areas look untouched.
 
 - `-t color-plasma` generates a separate plasma cloud for each channel, so the color split
   varies across the frame.
+- `-t color-radial` gives each channel its own radial gradient: one small, one medium and one
+  large, each with a slightly shifted center and a 50% chance of being inverted (lagging in the
+  middle instead of at the edges). Cuts open as overlapping colored circles, and moving things
+  pick up colored halos. Try a few `--seed` values; each gives a different combination.
 - You can paint one too. Pure black is "now" for every channel; pure red delays only the red
   channel by the full window; white delays all three equally, the same as a grayscale mask.
 - A mask whose channels are all equal (any gray image, even if saved as RGB) is treated as
@@ -132,8 +136,8 @@ uv run timedisplace.py INPUT WINDOW [-m MASK | -t TYPE] [options]
 | `INPUT` | Any video ffmpeg can read: mp4, webm, mkv, mov, … |
 | `WINDOW` | Delay in seconds for a pure white mask pixel |
 | `-m, --mask` | Mask image, grayscale or [color](#color-masks), ideally a 16-bit PNG. If it's a different size from the video, it's stretched to fit. |
-| `-t, --mask-type` | Generate a mask at the video's size instead: `horizontal`, `vertical`, `radial`, `noise`, `plasma` or `color-plasma` (see [makemask.py](#makemaskpy)). If neither `-m` nor `-t` is given, you get `radial`. |
-| `--seed` | Random seed for the `noise`, `plasma` and `color-plasma` types. Without it, a random seed is chosen and printed so you can reproduce a result you like. |
+| `-t, --mask-type` | Generate a mask at the video's size instead: `horizontal`, `vertical`, `radial`, `noise`, `plasma`, `color-plasma` or `color-radial` (see [makemask.py](#makemaskpy)). If neither `-m` nor `-t` is given, you get `radial`. |
+| `--seed` | Random seed for the `noise`, `plasma`, `color-plasma` and `color-radial` types. Without it, a random seed is chosen and printed so you can reproduce a result you like. |
 | `--roughness` | Detail level for the `plasma` and `color-plasma` types, from 0 to 1 (default 0.5) |
 | `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC. Defaults to `<input>_displaced.mp4` next to the input. |
 | `--fast` | Use the nearest frame instead of blending two |
@@ -156,11 +160,12 @@ uv run makemask.py PATTERN WIDTH HEIGHT [-o mask.png] [--invert] [--seed N] [--r
 | `noise` | soft random blobs | Patchy, uneven lag |
 | `plasma` | cloudy fractal | Organic, smoky dissolves, especially at scene cuts |
 | `color-plasma` | three plasma clouds, one per channel | Red, green and blue drift apart into colored ghosts ([color masks](#color-masks)) |
+| `color-radial` | three differently sized radials, randomly inverted | Colored circles at cuts and colored halos on motion |
 
 | Option | Meaning |
 |---|---|
 | `--invert` | Swap black and white, so a radial mask lags at the center instead |
-| `--seed N` | Make `noise`, `plasma` and `color-plasma` reproducible |
+| `--seed N` | Make `noise`, `plasma`, `color-plasma` and `color-radial` reproducible |
 | `--roughness R` | For `plasma` and `color-plasma`, from 0 to 1 (default 0.5). Low gives big soft blobs; high gives fine, grainy clouds. |
 
 Use `makemask.py` when you want to keep a mask, edit it by hand, or reuse it across videos.
@@ -211,6 +216,9 @@ uv run timedisplace.py resources/tears-of-steel.webm 1.5 -t plasma -o out/tos.we
 
 # Red, green and blue drift apart into colored ghosts
 uv run timedisplace.py resources/big-buck-bunny.webm 1 -t color-plasma --seed 7
+
+# Colored circles and halos; each seed gives a different mix of sizes and inversions
+uv run timedisplace.py resources/spring.webm 1 -t color-radial --seed 2
 
 # Inverted fine plasma with a long window, for a dreamy, ghostly look
 uv run makemask.py plasma 1920 1080 --roughness 0.7 --invert --seed 3 -o resources/mask-ghost.png

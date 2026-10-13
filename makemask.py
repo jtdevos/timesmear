@@ -15,6 +15,8 @@ patterns:
   noise         soft random blobs
   plasma        cloudy diamond-square fractal; see --roughness
   color-plasma  a separate plasma per red/green/blue channel, so colors drift apart
+  color-radial  a radial per channel with its own size, a slightly shifted center,
+                and a 50% chance of being inverted, giving colored rings
 """
 
 EXAMPLES = """\
@@ -23,6 +25,7 @@ examples:
   uv run makemask.py radial 1920 1080 --invert -o center-lags.png
   uv run makemask.py plasma 1920 1080 --roughness 0.7 --seed 42 -o plasma.png
   uv run makemask.py color-plasma 1920 1080 -o color-plasma.png
+  uv run makemask.py color-radial 1920 1080 --seed 5 -o color-radial.png
 """
 
 import argparse
@@ -31,8 +34,8 @@ import sys
 import cv2
 import numpy as np
 
-PATTERNS = ["horizontal", "vertical", "radial", "noise", "plasma", "color-plasma"]
-RANDOM_PATTERNS = {"noise", "plasma", "color-plasma"}
+PATTERNS = ["horizontal", "vertical", "radial", "noise", "plasma", "color-plasma", "color-radial"]
+RANDOM_PATTERNS = {"noise", "plasma", "color-plasma", "color-radial"}
 
 
 def plasma(w, h, roughness, rng):
@@ -73,6 +76,21 @@ def plasma(w, h, roughness, rng):
     return m.astype(np.float32)
 
 
+def color_radial(x, y, w, h, rng):
+    """One radial per channel, each with a random size, a nudged center, and maybe inverted."""
+    aspect = h / w  # measure distance in units of width, so circles stay round
+    d_max = np.hypot(0.5, 0.5 * aspect)  # center-to-corner, as in the plain radial
+    # One radius from each of a small, medium and large band, so the channels always differ in size.
+    radii = rng.permutation([rng.uniform(lo, lo + 0.15) for lo in (0.4, 0.62, 0.85)])
+    channels = []
+    for r in radii:
+        cx, cy = 0.5 + rng.uniform(-0.08, 0.08, 2)
+        d = np.hypot(x - cx, (y - cy) * aspect)
+        m = np.clip(d / (r * d_max), 0, 1)
+        channels.append(1 - m if rng.random() < 0.5 else m)
+    return np.dstack(channels).astype(np.float32)
+
+
 def make(pattern, w, h, roughness=0.5, seed=None):
     """Return a float32 mask in 0..1: shape (h, w), or (h, w, 3) for color patterns (BGR order)."""
     rng = np.random.default_rng(seed)
@@ -92,6 +110,8 @@ def make(pattern, w, h, roughness=0.5, seed=None):
         return plasma(w, h, roughness, rng)
     if pattern == "color-plasma":
         return np.dstack([plasma(w, h, roughness, rng) for _ in range(3)])
+    if pattern == "color-radial":
+        return color_radial(x, y, w, h, rng)
     raise ValueError(pattern)
 
 
@@ -104,7 +124,7 @@ def main():
     p.add_argument("height", type=int, help="mask height in pixels")
     p.add_argument("-o", "--output", default="mask.png", help="output PNG (default: mask.png)")
     p.add_argument("--invert", action="store_true", help="swap black and white (now <-> oldest)")
-    p.add_argument("--seed", type=int, help="random seed for noise/plasma/color-plasma (default: random)")
+    p.add_argument("--seed", type=int, help="random seed for noise, plasma and the color patterns (default: random)")
     p.add_argument("--roughness", type=float, default=0.5,
                    help="plasma/color-plasma: 0-1, higher = more fine detail (default 0.5)")
     if len(sys.argv) == 1:

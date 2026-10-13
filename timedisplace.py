@@ -143,7 +143,7 @@ def main():
                         help="mask image: grayscale, or color for per-channel delays (16-bit PNG recommended)")
     source.add_argument("-t", "--mask-type", choices=PATTERNS, metavar="TYPE",
                         help="generate a mask at the video's size instead: %(choices)s (default: radial)")
-    p.add_argument("--seed", type=int, help="with -t noise/plasma/color-plasma: random seed (default: random, printed)")
+    p.add_argument("--seed", type=int, help="with -t noise, plasma or a color type: random seed (default: random, printed)")
     p.add_argument("--roughness", type=float, default=0.5,
                    help="with -t plasma/color-plasma: 0-1, higher = more fine detail (default 0.5)")
     p.add_argument("-o", "--output", type=Path,
