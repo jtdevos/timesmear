@@ -189,14 +189,17 @@ def default_codecs():
     return (VIDEOTOOLBOX if "h264_videotoolbox" in encoders else X264) + ["-c:a", "aac"]
 
 
-def open_encoder(dest, original, width, height, fps):
+def open_encoder(dest, original, width, height, fps, audio_delay=0):
     """Start ffmpeg reading raw BGR frames on stdin, encoding for dest's container and
-    copying in the original's audio (if any). Frames are encoded once, straight from memory."""
+    copying in the original's audio (if any), audio_delay seconds late. Frames are encoded
+    once, straight from memory."""
     codecs = CODECS.get(dest.suffix.lower()) or default_codecs()
+    # adelay pads the start with silence; -shortest then trims the tail to the video's length.
+    delay = ["-af", f"adelay=delays={round(audio_delay * 1000)}:all=1"] if audio_delay > 0 else []
     return subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error",
          "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", f"{fps}", "-i", "-",
-         "-i", str(original), "-map", "0:v", "-map", "1:a?", *codecs, "-shortest", str(dest)],
+         "-i", str(original), "-map", "0:v", "-map", "1:a?", *codecs, *delay, "-shortest", str(dest)],
         stdin=subprocess.PIPE,
     )
 
@@ -246,6 +249,10 @@ def main():
     p.add_argument("--only", choices=["luma", "chroma"],
                    help="delay only brightness (luma) or only color (chroma) by a grayscale mask; "
                         "the other stays live (implies --space ycc)")
+    p.add_argument("--audio-delay", type=float, metavar="SECONDS",
+                   help="play the original audio this much later, to match the delayed picture "
+                        "(default: half the window, the average delay of a mid-gray mask; 0 keeps the "
+                        "audio in sync with the input, e.g. for lip sync with a radial mask's live center)")
     p.add_argument("--hue", type=float, default=0, metavar="DEG",
                    help="with a color mask: rotate the three primaries this many degrees around the color "
                         "wheel, changing the ghost colors (0 = red/green/blue, the default; 30 = orange/spring "
@@ -263,6 +270,10 @@ def main():
         p.error("window must be greater than 0")
     if not 0 < args.roughness <= 1:
         p.error("--roughness must be between 0 and 1")
+    if args.audio_delay is None:
+        args.audio_delay = args.window / 2
+    if args.audio_delay < 0:
+        p.error("--audio-delay can't be negative (the picture never shows the future)")
     if args.hue and (args.space == "ycc" or args.only):
         p.error("--hue works on red/green/blue, so it can't be combined with --space ycc or --only")
 
@@ -321,7 +332,7 @@ def main():
         output = args.output or default_output(args.input, mask_label, args.window, args.fast, space_tag)
         output.parent.mkdir(parents=True, exist_ok=True)
         if shutil.which("ffmpeg"):
-            encoder = open_encoder(output, args.input, width, height, fps)
+            encoder = open_encoder(output, args.input, width, height, fps, args.audio_delay)
         else:
             # Without ffmpeg, OpenCV can still write a silent MP4.
             output = output.with_suffix(".mp4")

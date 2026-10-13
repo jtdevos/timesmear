@@ -94,6 +94,8 @@ output = input[t - delay][y, x]
   and comes to life as the buffer fills.
 - **Past only:** pixels never look into the future, which keeps memory bounded and would also
   work for live input.
+- **Audio:** the sound is delayed by half the window, the average delay of a mid-gray mask
+  pixel, so it lines up with the picture as a whole. Change it with `--audio-delay`.
 
 ## Color masks
 
@@ -188,12 +190,15 @@ uv run timedisplace.py INPUT WINDOW [-m MASK | -t TYPE] [options]
 | `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC (hardware-encoded on Macs). Without it, the output goes next to the input, named after the settings (see below). |
 | `--space` | `rgb` (default) or `ycc`: which channels a color mask delays (see [Brightness and color](#brightness-and-color)) |
 | `--only` | `luma` or `chroma`: delay only brightness or only color, by a grayscale mask (implies `--space ycc`) |
+| `--audio-delay` | Play the original audio this many seconds late (default: half the window). Use `0` to keep it in sync with the input, for example to keep speech in lip sync with the radial mask's live center. |
 | `--hue` | With a color mask, rotate the three primaries this many degrees around the color wheel, changing the ghost colors (see [Changing the ghost colors](#changing-the-ghost-colors)) |
 | `--fast` | Use the nearest frame instead of blending two |
 | `--preview` | Show the output in a window while rendering (press `q` to stop) |
 | `--no-output` | Use with `--preview` to watch without writing a file |
 
-The original audio is copied into the output, unchanged.
+The original audio is carried over into the output, delayed by `--audio-delay` (half the
+window by default). The first moment of the output is silent, and the end of the audio is
+trimmed to the video's length.
 
 Without `-o`, the output is named `<input>_<mask>_<window>s[_ycc|_luma-only|_chroma-only|_hueDEG][_fast].mp4` and saved next to the
 input. For a generated mask, the name includes the seed (and `--roughness`, if it isn't the
