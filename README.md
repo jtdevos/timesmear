@@ -35,6 +35,7 @@ grows outward from the middle as an expanding circle:
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
 - [Color masks](#color-masks): per-channel delays
+- [Brightness and color](#brightness-and-color): delay luma or chroma separately
 - [timedisplace.py](#timedisplacepy): apply the effect
 - [makemask.py](#makemaskpy): generate masks
 - [bootstrap.sh](#bootstrapsh): fetch reference clips
@@ -127,6 +128,24 @@ areas look untouched.
 - A mask whose channels are all equal (any gray image, even if saved as RGB) is treated as
   grayscale and processed the usual way.
 
+## Brightness and color
+
+By default the delays apply to the red, green and blue channels. With `--space ycc`, they apply
+to brightness (Y) and color (Cb and Cr) instead: the mask's red channel sets the brightness
+delay, green sets Cb's and blue sets Cr's. The colored ghosts become darker smears with pastel
+fringes rather than rainbow splits.
+
+`--only` splits the picture with an ordinary grayscale mask:
+
+- `--only chroma` delays the color and keeps brightness live. Shapes and edges stay sharp, and
+  color arrives late, in patches, as if painted in after the fact. This works best on colorful
+  footage such as Big Buck Bunny.
+- `--only luma` delays brightness and keeps color live, so you see gray ghosts of past poses
+  tinted with the present colors.
+
+Mixing brightness from one moment with color from another can produce colors outside the RGB
+range. Those get clipped: typically 3–7% of pixels, by a few levels. It doesn't affect speed.
+
 ## timedisplace.py
 
 ```bash
@@ -142,13 +161,15 @@ uv run timedisplace.py INPUT WINDOW [-m MASK | -t TYPE] [options]
 | `--seed` | Random seed for the `noise`, `plasma`, `color-plasma` and `color-radial` types. Without it, a random seed is chosen and printed so you can reproduce a result you like. |
 | `--roughness` | Detail level for the `plasma` and `color-plasma` types, from 0 to 1 (default 0.5) |
 | `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC (hardware-encoded on Macs). Without it, the output goes next to the input, named after the settings (see below). |
+| `--space` | `rgb` (default) or `ycc`: which channels a color mask delays (see [Brightness and color](#brightness-and-color)) |
+| `--only` | `luma` or `chroma`: delay only brightness or only color, by a grayscale mask (implies `--space ycc`) |
 | `--fast` | Use the nearest frame instead of blending two |
 | `--preview` | Show the output in a window while rendering (press `q` to stop) |
 | `--no-output` | Use with `--preview` to watch without writing a file |
 
 The original audio is copied into the output, unchanged.
 
-Without `-o`, the output is named `<input>_<mask>_<window>s[_fast].mp4` and saved next to the
+Without `-o`, the output is named `<input>_<mask>_<window>s[_ycc|_luma-only|_chroma-only][_fast].mp4` and saved next to the
 input. For a generated mask, the name includes the seed (and `--roughness`, if it isn't the
 default), so any render can be reproduced from its filename:
 
@@ -158,6 +179,7 @@ default), so any render can be reproduced from its filename:
 | `timedisplace.py dance.mp4 1.5 -t color-plasma --seed 7` | `dance_color-plasma-seed7_1.5s.mp4` |
 | `timedisplace.py dance.mp4 1.5 -t plasma --roughness 0.7` | `dance_plasma-seed<random>-rough0.7_1.5s.mp4` |
 | `timedisplace.py dance.mp4 3 -m mask-ghost.png --fast` | `dance_mask-ghost_3s_fast.mp4` |
+| `timedisplace.py dance.mp4 1 -t plasma --seed 7 --only chroma` | `dance_plasma-seed7_1s_chroma-only.mp4` |
 
 Running the same settings again overwrites the earlier file, since it would contain the same
 video.
@@ -236,6 +258,9 @@ uv run timedisplace.py resources/big-buck-bunny.webm 1 -t color-plasma --seed 7
 # Colored circles and halos; each seed gives a different mix of sizes and inversions
 uv run timedisplace.py resources/spring.webm 1 -t color-radial --seed 2
 
+# Sharp shapes, late color: only the color lags, in plasma patches
+uv run timedisplace.py resources/big-buck-bunny.webm 1 -t plasma --seed 7 --only chroma
+
 # Inverted fine plasma with a long window, for a dreamy, ghostly look
 uv run makemask.py plasma 1920 1080 --roughness 0.7 --invert --seed 3 -o resources/mask-ghost.png
 uv run timedisplace.py resources/spring.webm 3 -m resources/mask-ghost.png
@@ -302,7 +327,8 @@ it starts:
 ## Development
 
 `tests/test_timedisplace.py` checks that the optimized effect matches a plain NumPy version of the
-algorithm bit for bit, for grayscale and color masks, blended and `--fast`:
+algorithm bit for bit, for grayscale and color masks, blended and `--fast`, and that the
+YCbCr mask mapping sends each mask channel to the right part of the picture:
 
 ```bash
 uv run tests/test_timedisplace.py
