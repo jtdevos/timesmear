@@ -41,12 +41,13 @@ grows outward from the middle as an expanding circle:
 - [Recipes](#recipes)
 - [Performance and memory](#performance-and-memory)
 - [Troubleshooting](#troubleshooting)
+- [Development](#development)
 - [License and credits](#license-and-credits)
 
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/), which runs the scripts. On first run it fetches a suitable
-  Python plus OpenCV and NumPy automatically, so there's no virtualenv to manage.
+  Python plus OpenCV, NumPy and Numba automatically, so there's no virtualenv to manage.
 - [ffmpeg](https://ffmpeg.org/), which carries over the audio and encodes the final video.
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) is optional. `bootstrap.sh` falls back to
   `uvx yt-dlp` if it isn't installed.
@@ -84,8 +85,8 @@ output = input[t - delay][y, x]
 - **Frame buffer:** the tool keeps the last `window` seconds of frames in memory (a ring
   buffer), so it can stream through videos of any length.
 - **Blending:** delays usually fall between two frames, so by default each pixel blends the two
-  nearest frames for smooth motion. `--fast` snaps to the nearest frame instead. That's about
-  twice as fast, with slightly steppier motion.
+  nearest frames for smooth motion. `--fast` snaps to the nearest frame instead, for slightly
+  steppier motion. Since encoding the output now takes most of the time, it saves little.
 - **The first few seconds:** until `window` seconds of history exist, pixels that would look
   back before the start show the first frame. The opening of the output therefore starts frozen
   and comes to life as the buffer fills.
@@ -243,17 +244,21 @@ Tips:
 
 ## Performance and memory
 
-These figures were measured on an Apple Silicon Mac. They cover the full pipeline: decode,
-effect and H.264 encode.
+The effect runs as compiled, multithreaded code (via [Numba](https://numba.pydata.org/)), and
+frames are piped straight into ffmpeg, which encodes them once. Measured on an M1 Max:
 
-| Resolution | Blend | `--fast` |
-|---|---|---|
-| 1280×720 | ~30 fps (effect alone) | ~80 fps (effect alone) |
-| 1920×1080 | ~11 fps | ~23 fps |
+| Stage | Speed at 1080p |
+|---|---|
+| Effect, grayscale mask | ~520 fps blended, ~1000 fps with `--fast` |
+| Effect, color mask | ~290 fps blended, ~530 fps with `--fast` |
+| Whole pipeline (decode, effect, H.264 encode) | ~58 fps for 1920×800, color-plasma mask |
 
-At 1080p, an 11-minute video takes about 25 minutes blended, or 12 minutes with `--fast`.
-`--fast --preview` runs at roughly real time for 24 fps 1080p footage. WebM output encodes more
+The whole pipeline is limited by H.264 encoding. The effect itself is no longer the bottleneck.
+At that rate, an 11-minute 1080p video takes about 5–6 minutes. WebM (VP9) output encodes more
 slowly than MP4.
+
+The first time you run `timedisplace.py`, Numba compiles the effect, which adds a few seconds.
+The compiled code is cached in `__pycache__`, so later runs start straight away.
 
 Memory is about `window × fps × width × height × 3` bytes, and the tool prints the estimate when
 it starts:
@@ -272,6 +277,17 @@ it starts:
 - **A YouTube download fails with 403:** this is usually transient, so re-run `bootstrap.sh`. If
   it keeps happening, update yt-dlp.
 - **Banding in smooth gradients:** use a 16-bit PNG mask. `makemask.py` already does this.
+
+## Development
+
+`tests/test_timedisplace.py` checks that the optimized effect matches a plain NumPy version of the
+algorithm bit for bit, for grayscale and color masks, blended and `--fast`:
+
+```bash
+uv run tests/test_timedisplace.py
+```
+
+Run it after changing anything in `TimeDisplacer` or its kernels.
 
 ## License and credits
 

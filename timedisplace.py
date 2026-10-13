@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10,<3.14"
-# dependencies = ["opencv-python", "numpy"]
+# dependencies = ["opencv-python", "numpy", "numba"]
 # ///
 """timesmear: time displacement video effect.
 
@@ -41,11 +41,11 @@ import random
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import cv2
 import numpy as np
+from numba import njit, prange
 
 from makemask import PATTERNS, RANDOM_PATTERNS, make
 
@@ -68,6 +68,34 @@ def load_mask(path, width, height):
     return mask
 
 
+# The kernels compile on first use and are cached in __pycache__, so only the very first run pays.
+# k0 and frac have shape (h, w, 1) for a grayscale mask or (h, w, 3) for a color mask.
+
+@njit(parallel=True, cache=True)
+def _blend(buf, k0, frac, t, size, out):
+    """Blend the frames k0 and k0 + 1 back, with weight frac/256 on the older one."""
+    h, w, nk = k0.shape
+    for y in prange(h):
+        for x in range(w):
+            for c in range(3):
+                m = c if nk == 3 else 0
+                s = t - k0[y, x, m]
+                a = np.int32(buf[max(s, 0) % size, y, x, c])
+                b = np.int32(buf[max(s - 1, 0) % size, y, x, c])
+                out[y, x, c] = a + (((b - a) * frac[y, x, m] + 128) >> 8)
+
+
+@njit(parallel=True, cache=True)
+def _nearest(buf, k0, t, size, out):
+    """Copy from the frame k0 back."""
+    h, w, nk = k0.shape
+    for y in prange(h):
+        for x in range(w):
+            for c in range(3):
+                s = t - k0[y, x, c if nk == 3 else 0]
+                out[y, x, c] = buf[max(s, 0) % size, y, x, c]
+
+
 class TimeDisplacer:
     """Ring buffer of recent frames, sampled per pixel (grayscale mask) or per channel (color mask)."""
 
@@ -76,42 +104,27 @@ class TimeDisplacer:
         self.color = mask.ndim == 3
         self.fast = fast
         offsets = mask * window * fps  # in frames, per pixel (or per pixel channel)
+        if not self.color:
+            offsets = offsets[..., None]
         if fast:
-            self.k0 = np.rint(offsets).astype(np.int64)
+            self.k0 = np.rint(offsets).astype(np.int32)
             self.frac = None
         else:
-            self.k0 = np.floor(offsets).astype(np.int64)
+            self.k0 = np.floor(offsets).astype(np.int32)
             # Blend weight as an integer 0..256 so blending can stay in integer math.
-            frac = np.rint((offsets - self.k0) * 256).astype(np.int32)
-            self.frac = frac if self.color else frac[..., None]
+            self.frac = np.rint((offsets - self.k0) * 256).astype(np.int32)
         # Blending reads one frame further back than k0.
         self.size = int(self.k0.max()) + 2
-        self.buf = None
-        # Index of each element within one frame: whole BGR pixels for a grayscale mask,
-        # individual channel bytes for a color mask.
-        if self.color:
-            self.frame_len = self.h * self.w * 3
-            self.pix = np.arange(self.frame_len, dtype=np.int64).reshape(self.h, self.w, 3)
-        else:
-            self.frame_len = self.h * self.w
-            self.pix = np.arange(self.frame_len, dtype=np.int64).reshape(self.h, self.w)
+        self.buf = np.empty((self.size, self.h, self.w, 3), dtype=np.uint8)
         self.t = 0
 
-    def _gather(self, k):
-        src = np.maximum(self.t - k, 0) % self.size
-        flat = self.buf.reshape(-1) if self.color else self.buf.reshape(-1, 3)
-        return flat[src * self.frame_len + self.pix]
-
     def push(self, frame):
-        if self.buf is None:
-            self.buf = np.empty((self.size, self.h, self.w, 3), dtype=np.uint8)
         self.buf[self.t % self.size] = frame
+        out = np.empty((self.h, self.w, 3), dtype=np.uint8)
         if self.fast:
-            out = self._gather(self.k0)
+            _nearest(self.buf, self.k0, self.t, self.size, out)
         else:
-            a = self._gather(self.k0).astype(np.int32)
-            b = self._gather(self.k0 + 1).astype(np.int32)
-            out = (a + (((b - a) * self.frac + 128) >> 8)).astype(np.uint8)
+            _blend(self.buf, self.k0, self.frac, self.t, self.size, out)
         self.t += 1
         return out
 
@@ -123,14 +136,16 @@ CODECS = {
 DEFAULT_CODECS = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-c:a", "aac"]
 
 
-def mux_audio(video_only, original, dest):
-    """Re-encode the processed video for dest's container, copying in the original's audio (if any)."""
+def open_encoder(dest, original, width, height, fps):
+    """Start ffmpeg reading raw BGR frames on stdin, encoding for dest's container and
+    copying in the original's audio (if any). Frames are encoded once, straight from memory."""
     codecs = CODECS.get(dest.suffix.lower(), DEFAULT_CODECS)
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video_only), "-i", str(original),
-         "-map", "0:v", "-map", "1:a?", *codecs, "-shortest", str(dest)],
+    return subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", f"{fps}", "-i", "-",
+         "-i", str(original), "-map", "0:v", "-map", "1:a?", *codecs, "-shortest", str(dest)],
+        stdin=subprocess.PIPE,
     )
-    return result.returncode == 0
 
 
 def main():
@@ -149,7 +164,7 @@ def main():
     p.add_argument("-o", "--output", type=Path,
                    help="output video; .webm gives VP9/Opus, anything else H.264/AAC "
                         "(default: <input>_displaced.mp4)")
-    p.add_argument("--fast", action="store_true", help="use the nearest frame instead of blending two (about 2x faster)")
+    p.add_argument("--fast", action="store_true", help="use the nearest frame instead of blending two (slightly steppier motion)")
     p.add_argument("--preview", action="store_true", help="show frames in a window while rendering (q to quit)")
     p.add_argument("--no-output", action="store_true", help="with --preview: don't write a file")
     if len(sys.argv) == 1:
@@ -188,13 +203,16 @@ def main():
     kind = "color mask, per-channel delays" if fx.color else "grayscale mask"
     print(f"{width}x{height} @ {fps:.2f}fps, {total} frames, {kind}; buffering {fx.size} frames (~{mb:.0f} MB)")
 
-    write = not args.no_output
-    if write:
+    encoder = writer = None
+    if not args.no_output:
         output = args.output or args.input.with_name(f"{args.input.stem}_displaced.mp4")
         output.parent.mkdir(parents=True, exist_ok=True)
-        tmpdir = tempfile.mkdtemp()
-        raw_path = Path(tmpdir) / "raw.mp4"
-        writer = cv2.VideoWriter(str(raw_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if shutil.which("ffmpeg"):
+            encoder = open_encoder(output, args.input, width, height, fps)
+        else:
+            # Without ffmpeg, OpenCV can still write a silent MP4.
+            output = output.with_suffix(".mp4")
+            writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
     delay = max(1, int(1000 / fps))
     n = 0
@@ -203,7 +221,12 @@ def main():
         if not ok:
             break
         out = fx.push(frame)
-        if write:
+        if encoder:
+            try:
+                encoder.stdin.write(out.data)
+            except BrokenPipeError:
+                sys.exit("ffmpeg stopped unexpectedly (see its error above)")
+        elif writer:
             writer.write(out)
         if args.preview:
             cv2.imshow("timedisplace", out)
@@ -217,16 +240,14 @@ def main():
     cap.release()
     if args.preview:
         cv2.destroyAllWindows()
-    if write:
+    if encoder:
+        encoder.stdin.close()
+        if encoder.wait() != 0:
+            sys.exit("ffmpeg failed to encode the output (see its error above)")
+        print(f"wrote {output}")
+    elif writer:
         writer.release()
-        if shutil.which("ffmpeg") and mux_audio(raw_path, args.input, output):
-            print(f"wrote {output}")
-        else:
-            # The raw file is always MP4, so don't save it under another container's extension.
-            fallback = output.with_suffix(".mp4")
-            shutil.move(raw_path, fallback)
-            print(f"wrote {fallback} (no audio; ffmpeg unavailable or failed)")
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        print(f"wrote {output} (no audio: ffmpeg not found)")
 
 
 if __name__ == "__main__":
