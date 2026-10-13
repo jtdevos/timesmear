@@ -358,6 +358,7 @@ it starts:
 
 `tests/test_timedisplace.py` checks that the optimized effect matches a plain NumPy version of the
 algorithm bit for bit, for grayscale and color masks, blended and `--fast`. It also checks that
+`--space ycc` and `--only` send each mask channel to the right part of the picture, and that
 `--hue` converts to the rotated primaries and back exactly, matches the plain effect when every
 primary has the same delay, and gives a delayed primary its shifted color:
 

@@ -10,11 +10,12 @@ Run with:  uv run tests/test_timedisplace.py
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from makemask import make  # noqa: E402
-from timedisplace import TimeDisplacer, _from_basis, _to_basis, hue_basis  # noqa: E402
+from timedisplace import TimeDisplacer, _from_basis, _to_basis, hue_basis, ycc_mask  # noqa: E402
 
 
 def reference(mask, window, fps, frames, fast):
@@ -69,6 +70,35 @@ def check_gray_equals_equal_channels():
     print("ok: a grayscale mask equals the same mask in all three channels")
 
 
+def check_ycc():
+    # Frames in OpenCV's YCrCb order whose value in every part is the frame number, so the
+    # output reads off how many frames back each part looked.
+    frames = [np.full((4, 6, 3), t, np.uint8) for t in range(60)]
+
+    def delays(mask, only=None):
+        fx = TimeDisplacer(ycc_mask(mask, only), 2.0, 10)
+        outs = [fx.push(f) for f in frames]
+        return tuple(45 - int(v) for v in outs[45][0, 0])  # (Y, Cr, Cb)
+
+    color = np.zeros((4, 6, 3), np.float32)
+    color[..., 0], color[..., 1], color[..., 2] = 0.25, 0.5, 1.0  # BGR: blue 5, green 10, red 20 frames
+    assert delays(color) == (20, 5, 10), "Y from the mask's red, Cr from blue, Cb from green"
+    gray = np.full((4, 6), 0.5, np.float32)
+    assert delays(gray) == (10, 10, 10)
+    assert delays(gray, "luma") == (10, 0, 0), "--only luma keeps color live"
+    assert delays(gray, "chroma") == (0, 10, 10), "--only chroma keeps brightness live"
+
+    # Through the real conversions, a picture whose parts all agree comes back as it went in.
+    rng = np.random.default_rng(5)
+    still = rng.integers(0, 256, (36, 48, 3), dtype=np.uint8)
+    fx = TimeDisplacer(ycc_mask(make("color-plasma", 48, 36, seed=3), None), 1.3, 10)
+    for _ in range(20):
+        out = cv2.cvtColor(fx.push(cv2.cvtColor(still, cv2.COLOR_BGR2YCrCb)), cv2.COLOR_YCrCb2BGR)
+    roundtrip = cv2.cvtColor(cv2.cvtColor(still, cv2.COLOR_BGR2YCrCb), cv2.COLOR_YCrCb2BGR)
+    assert (out == roundtrip).all()
+    print("ok: YCbCr sends each mask channel to the right part of the picture, and --only keeps the other live")
+
+
 def check_hue():
     basis = hue_basis(30)
     assert np.allclose(hue_basis(0), np.eye(3))
@@ -110,4 +140,5 @@ if __name__ == "__main__":
     check_matches_reference()
     check_per_channel_delays()
     check_gray_equals_equal_channels()
+    check_ycc()
     check_hue()
