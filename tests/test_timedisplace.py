@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from makemask import make  # noqa: E402
-from timedisplace import TimeDisplacer  # noqa: E402
+from timedisplace import TimeDisplacer, _from_basis, _to_basis, hue_basis  # noqa: E402
 
 
 def reference(mask, window, fps, frames, fast):
@@ -69,7 +69,45 @@ def check_gray_equals_equal_channels():
     print("ok: a grayscale mask equals the same mask in all three channels")
 
 
+def check_hue():
+    basis = hue_basis(30)
+    assert np.allclose(hue_basis(0), np.eye(3))
+    assert np.allclose(basis @ basis.T, np.eye(3)), "a rotation, so its transpose undoes it"
+    assert np.allclose(basis @ np.ones(3), np.ones(3)), "gray stays gray"
+
+    rng = np.random.default_rng(4)
+    frames = [rng.integers(0, 256, (36, 48, 3), dtype=np.uint8) for _ in range(40)]
+    amounts = np.empty((36, 48, 3), np.uint16)
+    out = np.empty((36, 48, 3), np.uint8)
+    _to_basis(frames[0], basis.T, amounts)
+    _from_basis(amounts, basis, out)
+    assert (out == frames[0]).all(), "converting to the rotated primaries and back is exact"
+
+    # With the same delay for every primary, it's the ordinary effect (to within rounding).
+    gray = make("plasma", 48, 36, seed=3)
+    plain, rotated = TimeDisplacer(gray, 1.3, 10), TimeDisplacer(np.dstack([gray] * 3), 1.3, 10, dtype=np.uint16)
+    for f in frames:
+        _to_basis(f, basis.T, amounts)
+        _from_basis(rotated.push(amounts), basis, out)
+        assert np.abs(out.astype(int) - plain.push(f)).max() <= 1
+
+    # Black turns white at frame 20; the rotated red is 10 frames late, so at frame 25 the
+    # picture is white minus rotated red: the complement of the shifted primary, not cyan.
+    mask = np.zeros((2, 2, 3), np.float32)
+    mask[..., 2] = 0.5  # BGR order: the third primary is (rotated) red
+    fx = TimeDisplacer(mask, 2.0, 10, dtype=np.uint16)
+    amounts, out = amounts[:2, :2].copy(), out[:2, :2].copy()
+    for t in range(26):
+        _to_basis(np.full((2, 2, 3), 200 if t >= 20 else 0, np.uint8), basis.T, amounts)
+        delayed = fx.push(amounts)
+    _from_basis(delayed, basis, out)
+    expected = np.clip(np.rint(200 * (basis[:, 0] + basis[:, 1])), 0, 255)
+    assert (out[0, 0] == expected).all(), (out[0, 0], expected)
+    print("ok: --hue round-trips exactly, matches the plain effect for equal delays, and shifts ghost colors")
+
+
 if __name__ == "__main__":
     check_matches_reference()
     check_per_channel_delays()
     check_gray_equals_equal_channels()
+    check_hue()

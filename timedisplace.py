@@ -25,6 +25,9 @@ examples:
   # red, green and blue drift apart in separate plasma clouds, written as WebM
   uv run timedisplace.py in.webm 1.5 -t color-plasma --seed 7 -o out.webm
 
+  # the same, with orange, spring green and violet ghosts instead of red, green and blue
+  uv run timedisplace.py in.webm 1.5 -t color-plasma --seed 7 --hue 30
+
   # use a mask image you made or painted
   uv run timedisplace.py in.webm 1.5 -m resources/mask-plasma.png
 
@@ -96,10 +99,51 @@ def _nearest(buf, k0, t, size, out):
                 out[y, x, c] = buf[max(s, 0) % size, y, x, c]
 
 
+# --hue stores frames as amounts of three hue-rotated primaries. Those can fall outside 0..255
+# (|amount| <= 255 * sqrt(3)), so they're kept as uint16: (amount + HUE_OFFSET) * HUE_SCALE.
+HUE_OFFSET, HUE_SCALE = 450.0, 64.0
+
+
+def hue_basis(degrees):
+    """3x3 matrix whose columns are blue, green and red rotated `degrees` around the gray axis,
+    in BGR coordinates. Gray stays gray, and the primaries (and so the ghost colors) shift hue."""
+    k = np.full(3, 1 / np.sqrt(3))
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    t = np.radians(degrees)
+    rgb = np.eye(3) + np.sin(t) * K + (1 - np.cos(t)) * K @ K  # Rodrigues' rotation formula
+    flip = np.eye(3)[::-1]
+    return flip @ rgb @ flip
+
+
+@njit(parallel=True, cache=True)
+def _to_basis(frame, m, out):
+    """BGR uint8 -> amounts of the basis colors (m is the inverse basis), stored as uint16."""
+    h, w, _ = frame.shape
+    for y in prange(h):
+        for x in range(w):
+            for i in range(3):
+                v = m[i, 0] * frame[y, x, 0] + m[i, 1] * frame[y, x, 1] + m[i, 2] * frame[y, x, 2]
+                out[y, x, i] = np.uint16((v + HUE_OFFSET) * HUE_SCALE + 0.5)
+
+
+@njit(parallel=True, cache=True)
+def _from_basis(amounts, m, out):
+    """Basis amounts (uint16) -> BGR uint8, clipping colors that mixing moments pushed out of range."""
+    h, w, _ = amounts.shape
+    for y in prange(h):
+        for x in range(w):
+            a0 = amounts[y, x, 0] / HUE_SCALE - HUE_OFFSET
+            a1 = amounts[y, x, 1] / HUE_SCALE - HUE_OFFSET
+            a2 = amounts[y, x, 2] / HUE_SCALE - HUE_OFFSET
+            for i in range(3):
+                v = m[i, 0] * a0 + m[i, 1] * a1 + m[i, 2] * a2
+                out[y, x, i] = min(max(int(v + 0.5), 0), 255)
+
+
 class TimeDisplacer:
     """Ring buffer of recent frames, sampled per pixel (grayscale mask) or per channel (color mask)."""
 
-    def __init__(self, mask, window, fps, fast=False):
+    def __init__(self, mask, window, fps, fast=False, dtype=np.uint8):
         self.h, self.w = mask.shape[:2]
         self.color = mask.ndim == 3
         self.fast = fast
@@ -115,12 +159,12 @@ class TimeDisplacer:
             self.frac = np.rint((offsets - self.k0) * 256).astype(np.int32)
         # Blending reads one frame further back than k0.
         self.size = int(self.k0.max()) + 2
-        self.buf = np.empty((self.size, self.h, self.w, 3), dtype=np.uint8)
+        self.buf = np.empty((self.size, self.h, self.w, 3), dtype=dtype)
         self.t = 0
 
     def push(self, frame):
         self.buf[self.t % self.size] = frame
-        out = np.empty((self.h, self.w, 3), dtype=np.uint8)
+        out = np.empty((self.h, self.w, 3), dtype=self.buf.dtype)
         if self.fast:
             _nearest(self.buf, self.k0, self.t, self.size, out)
         else:
@@ -193,7 +237,8 @@ def main():
                    help="with -t plasma/color-plasma: 0-1, higher = more fine detail (default 0.5)")
     p.add_argument("-o", "--output", type=Path,
                    help="output video; .webm gives VP9/Opus, anything else H.264/AAC "
-                        "(default: <input>_<mask>_<window>s[_fast].mp4 next to the input, "
+                        "(default: <input>_<mask>_<window>s[_ycc|_luma-only|_chroma-only|_hueDEG][_fast].mp4 "
+                        "next to the input, "
                         "e.g. dance_color-plasma-seed7_1.5s.mp4)")
     p.add_argument("--space", choices=["rgb", "ycc"], default="rgb",
                    help="channels a color mask delays: rgb = red/green/blue (default); ycc = brightness "
@@ -201,6 +246,10 @@ def main():
     p.add_argument("--only", choices=["luma", "chroma"],
                    help="delay only brightness (luma) or only color (chroma) by a grayscale mask; "
                         "the other stays live (implies --space ycc)")
+    p.add_argument("--hue", type=float, default=0, metavar="DEG",
+                   help="with a color mask: rotate the three primaries this many degrees around the color "
+                        "wheel, changing the ghost colors (0 = red/green/blue, the default; 30 = orange/spring "
+                        "green/violet, the most different; 60 = yellow/cyan/magenta, dimmer)")
     p.add_argument("--fast", action="store_true", help="use the nearest frame instead of blending two (slightly steppier motion)")
     p.add_argument("--preview", action="store_true", help="show frames in a window while rendering (q to quit)")
     p.add_argument("--no-output", action="store_true", help="with --preview: don't write a file")
@@ -214,6 +263,8 @@ def main():
         p.error("window must be greater than 0")
     if not 0 < args.roughness <= 1:
         p.error("--roughness must be between 0 and 1")
+    if args.hue and (args.space == "ycc" or args.only):
+        p.error("--hue works on red/green/blue, so it can't be combined with --space ycc or --only")
 
     cap = cv2.VideoCapture(str(args.input))
     if not cap.isOpened():
@@ -246,18 +297,27 @@ def main():
         if args.only and mask.ndim == 3:
             sys.exit("--only needs a grayscale mask")
         mask = ycc_mask(mask, args.only)
-    fx = TimeDisplacer(mask, args.window, fps, fast=args.fast)
-    mb = fx.size * width * height * 3 / 1e6
+    if args.hue and mask.ndim == 2:
+        sys.exit("--hue needs a color mask (with a grayscale mask every primary has the same delay)")
+    if args.hue:
+        basis = hue_basis(args.hue)
+        unbasis = basis.T  # a rotation's inverse is its transpose
+        amounts = np.empty((height, width, 3), np.uint16)
+        rgb_out = np.empty((height, width, 3), np.uint8)
+    fx = TimeDisplacer(mask, args.window, fps, fast=args.fast, dtype=np.uint16 if args.hue else np.uint8)
+    mb = fx.buf.nbytes / 1e6
     kind = "color mask, per-channel delays" if fx.color else "grayscale mask"
     if args.only:
         kind = f"{args.only} only"
     elif ycc:
         kind += " in YCbCr"
+    elif args.hue:
+        kind += f", primaries rotated {args.hue:g} degrees"
     print(f"{width}x{height} @ {fps:.2f}fps, {total} frames, {kind}; buffering {fx.size} frames (~{mb:.0f} MB)")
 
     encoder = writer = None
     if not args.no_output:
-        space_tag = f"{args.only}-only" if args.only else ("ycc" if ycc else None)
+        space_tag = f"{args.only}-only" if args.only else ("ycc" if ycc else (f"hue{args.hue:g}" if args.hue else None))
         output = args.output or default_output(args.input, mask_label, args.window, args.fast, space_tag)
         output.parent.mkdir(parents=True, exist_ok=True)
         if shutil.which("ffmpeg"):
@@ -275,7 +335,13 @@ def main():
             break
         if ycc:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+        if args.hue:
+            _to_basis(frame, unbasis, amounts)
+            frame = amounts
         out = fx.push(frame)
+        if args.hue:
+            _from_basis(out, basis, rgb_out)
+            out = rgb_out
         if ycc:
             # Values that mix brightness and color from different moments can fall outside
             # RGB; the conversion clips them.

@@ -34,7 +34,7 @@ grows outward from the middle as an expanding circle:
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
-- [Color masks](#color-masks): per-channel delays
+- [Color masks](#color-masks): per-channel delays, and `--hue` to change the ghost colors
 - [Brightness and color](#brightness-and-color): delay luma or chroma separately
 - [timedisplace.py](#timedisplacepy): apply the effect
 - [makemask.py](#makemaskpy): generate masks
@@ -128,6 +128,31 @@ areas look untouched.
 - A mask whose channels are all equal (any gray image, even if saved as RGB) is treated as
   grayscale and processed the usual way.
 
+### Changing the ghost colors
+
+Red, green and blue aren't the only three colors that add up to every other color. `--hue DEG`
+turns all three around the color wheel by `DEG` degrees and delays those instead. Gray stays
+gray, a still picture is unchanged, and the ghosts take on the shifted colors:
+
+| `--hue` | Where one primary shows alone | Where one primary is missing |
+|---|---|---|
+| `0` (default) | red, green, blue | cyan, magenta, yellow |
+| `30` | orange, spring green, violet | azure, rose, chartreuse |
+| `60` | yellow, cyan, magenta (dimmer) | blue, red, green |
+
+The colors repeat every 60°, and 30 is the most different from the default. The further from 0,
+the duller the shifted primaries become, because a rotated "pure red" is
+more saturated than a screen can show and gets clipped. Up to about 30 they stay vivid. Swapping
+in cyan, magenta and yellow doesn't give a new look: delaying cyan is the same as delaying red.
+
+```bash
+uv run timedisplace.py resources/big-buck-bunny.webm 1 -t color-plasma --seed 7 --hue 30
+```
+
+`--hue` needs a color mask, since with a grayscale mask every color has the same delay. It
+works on red, green and blue, so it can't be combined with `--space ycc` or `--only`. The frame
+buffer uses twice the memory, to hold the in-between values precisely.
+
 ## Brightness and color
 
 By default the delays apply to the red, green and blue channels. With `--space ycc`, they apply
@@ -163,13 +188,14 @@ uv run timedisplace.py INPUT WINDOW [-m MASK | -t TYPE] [options]
 | `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC (hardware-encoded on Macs). Without it, the output goes next to the input, named after the settings (see below). |
 | `--space` | `rgb` (default) or `ycc`: which channels a color mask delays (see [Brightness and color](#brightness-and-color)) |
 | `--only` | `luma` or `chroma`: delay only brightness or only color, by a grayscale mask (implies `--space ycc`) |
+| `--hue` | With a color mask, rotate the three primaries this many degrees around the color wheel, changing the ghost colors (see [Changing the ghost colors](#changing-the-ghost-colors)) |
 | `--fast` | Use the nearest frame instead of blending two |
 | `--preview` | Show the output in a window while rendering (press `q` to stop) |
 | `--no-output` | Use with `--preview` to watch without writing a file |
 
 The original audio is copied into the output, unchanged.
 
-Without `-o`, the output is named `<input>_<mask>_<window>s[_ycc|_luma-only|_chroma-only][_fast].mp4` and saved next to the
+Without `-o`, the output is named `<input>_<mask>_<window>s[_ycc|_luma-only|_chroma-only|_hueDEG][_fast].mp4` and saved next to the
 input. For a generated mask, the name includes the seed (and `--roughness`, if it isn't the
 default), so any render can be reproduced from its filename:
 
@@ -180,6 +206,7 @@ default), so any render can be reproduced from its filename:
 | `timedisplace.py dance.mp4 1.5 -t plasma --roughness 0.7` | `dance_plasma-seed<random>-rough0.7_1.5s.mp4` |
 | `timedisplace.py dance.mp4 3 -m mask-ghost.png --fast` | `dance_mask-ghost_3s_fast.mp4` |
 | `timedisplace.py dance.mp4 1 -t plasma --seed 7 --only chroma` | `dance_plasma-seed7_1s_chroma-only.mp4` |
+| `timedisplace.py dance.mp4 1 -t color-plasma --seed 7 --hue 30` | `dance_color-plasma-seed7_1s_hue30.mp4` |
 
 Running the same settings again overwrites the earlier file, since it would contain the same
 video.
@@ -255,6 +282,9 @@ uv run timedisplace.py resources/tears-of-steel.webm 1.5 -t plasma -o out/tos.we
 # Red, green and blue drift apart into colored ghosts
 uv run timedisplace.py resources/big-buck-bunny.webm 1 -t color-plasma --seed 7
 
+# The same ghosts in orange, spring green and violet
+uv run timedisplace.py resources/big-buck-bunny.webm 1 -t color-plasma --seed 7 --hue 30
+
 # Colored circles and halos; each seed gives a different mix of sizes and inversions
 uv run timedisplace.py resources/spring.webm 1 -t color-radial --seed 2
 
@@ -327,8 +357,9 @@ it starts:
 ## Development
 
 `tests/test_timedisplace.py` checks that the optimized effect matches a plain NumPy version of the
-algorithm bit for bit, for grayscale and color masks, blended and `--fast`, and that the
-YCbCr mask mapping sends each mask channel to the right part of the picture:
+algorithm bit for bit, for grayscale and color masks, blended and `--fast`. It also checks that
+`--hue` converts to the rotated primaries and back exactly, matches the plain effect when every
+primary has the same delay, and gives a delayed primary its shifted color:
 
 ```bash
 uv run tests/test_timedisplace.py
