@@ -140,7 +140,7 @@ uv run timedisplace.py INPUT WINDOW [-m MASK | -t TYPE] [options]
 | `-t, --mask-type` | Generate a mask at the video's size instead: `horizontal`, `vertical`, `radial`, `noise`, `plasma`, `color-plasma` or `color-radial` (see [makemask.py](#makemaskpy)). If neither `-m` nor `-t` is given, you get `radial`. |
 | `--seed` | Random seed for the `noise`, `plasma`, `color-plasma` and `color-radial` types. Without it, a random seed is chosen and printed so you can reproduce a result you like. |
 | `--roughness` | Detail level for the `plasma` and `color-plasma` types, from 0 to 1 (default 0.5) |
-| `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC. Defaults to `<input>_displaced.mp4` next to the input. |
+| `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC (hardware-encoded on Macs). Defaults to `<input>_displaced.mp4` next to the input. |
 | `--fast` | Use the nearest frame instead of blending two |
 | `--preview` | Show the output in a window while rendering (press `q` to stop) |
 | `--no-output` | Use with `--preview` to watch without writing a file |
@@ -245,17 +245,23 @@ Tips:
 ## Performance and memory
 
 The effect runs as compiled, multithreaded code (via [Numba](https://numba.pydata.org/)), and
-frames are piped straight into ffmpeg, which encodes them once. Measured on an M1 Max:
+frames are piped straight into ffmpeg, which encodes them once. On a Mac, MP4 output uses Apple's
+hardware H.264 encoder (VideoToolbox), which leaves the CPU free for decoding and the effect.
+On other systems it falls back to x264. Measured on an M1 Max:
 
 | Stage | Speed at 1080p |
 |---|---|
 | Effect, grayscale mask | ~520 fps blended, ~1000 fps with `--fast` |
 | Effect, color mask | ~290 fps blended, ~530 fps with `--fast` |
-| Whole pipeline (decode, effect, H.264 encode) | ~58 fps for 1920×800, color-plasma mask |
+| Whole pipeline (decode, effect, H.264 encode) | ~170 fps for 1920×800, color-plasma mask |
 
-The whole pipeline is limited by H.264 encoding. The effect itself is no longer the bottleneck.
-At that rate, an 11-minute 1080p video takes about 5–6 minutes. WebM (VP9) output encodes more
-slowly than MP4.
+At that rate, an 11-minute 1080p video takes about 2 minutes. Without the hardware encoder (x264,
+on non-Mac systems), expect about a third of that speed. WebM (VP9) output is always
+software-encoded and much slower than MP4.
+
+The hardware encoder's quality setting (`-q:v 75`) was chosen to match x264 CRF 18 on VMAF, a
+perceptual quality score. In exchange for being nearly 3x faster, files come out about 13%
+larger.
 
 The first time you run `timedisplace.py`, Numba compiles the effect, which adds a few seconds.
 The compiled code is cached in `__pycache__`, so later runs start straight away.
