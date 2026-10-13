@@ -157,9 +157,24 @@ def open_encoder(dest, original, width, height, fps):
     )
 
 
-def default_output(input_path, mask_label, window, fast):
+def ycc_mask(mask, only):
+    """Rearrange a mask to match frames in OpenCV's YCrCb channel order (Y, Cr, Cb).
+
+    A color mask's red, green and blue channels set the Y, Cb and Cr delays. With only="luma"
+    or "chroma", a grayscale mask delays just that part of the picture; the rest stays live."""
+    if only:
+        zero = np.zeros_like(mask)
+        return np.dstack([mask, zero, zero] if only == "luma" else [zero, mask, mask])
+    if mask.ndim == 3:
+        b, g, r = mask[..., 0], mask[..., 1], mask[..., 2]
+        return np.dstack([r, b, g])  # Y <- red, Cr <- blue, Cb <- green
+    return mask
+
+
+def default_output(input_path, mask_label, window, fast, space_tag=None):
     """e.g. dance.mp4, color-plasma-seed7, 1.5, False -> dance_color-plasma-seed7_1.5s.mp4"""
-    parts = [input_path.stem, mask_label, f"{window:g}s"] + (["fast"] if fast else [])
+    parts = [input_path.stem, mask_label, f"{window:g}s"] + ([space_tag] if space_tag else [])
+    parts += ["fast"] if fast else []
     return input_path.with_name("_".join(parts) + ".mp4")
 
 
@@ -180,6 +195,12 @@ def main():
                    help="output video; .webm gives VP9/Opus, anything else H.264/AAC "
                         "(default: <input>_<mask>_<window>s[_fast].mp4 next to the input, "
                         "e.g. dance_color-plasma-seed7_1.5s.mp4)")
+    p.add_argument("--space", choices=["rgb", "ycc"], default="rgb",
+                   help="channels a color mask delays: rgb = red/green/blue (default); ycc = brightness "
+                        "(Y, from the mask's red) and color (Cb, Cr, from green and blue)")
+    p.add_argument("--only", choices=["luma", "chroma"],
+                   help="delay only brightness (luma) or only color (chroma) by a grayscale mask; "
+                        "the other stays live (implies --space ycc)")
     p.add_argument("--fast", action="store_true", help="use the nearest frame instead of blending two (slightly steppier motion)")
     p.add_argument("--preview", action="store_true", help="show frames in a window while rendering (q to quit)")
     p.add_argument("--no-output", action="store_true", help="with --preview: don't write a file")
@@ -220,14 +241,24 @@ def main():
             mask_label += f"-rough{args.roughness:g}"
         mask = make(mask_type, width, height, args.roughness, seed)
         print(f"generated {desc}")
+    ycc = args.space == "ycc" or args.only is not None
+    if ycc:
+        if args.only and mask.ndim == 3:
+            sys.exit("--only needs a grayscale mask")
+        mask = ycc_mask(mask, args.only)
     fx = TimeDisplacer(mask, args.window, fps, fast=args.fast)
     mb = fx.size * width * height * 3 / 1e6
     kind = "color mask, per-channel delays" if fx.color else "grayscale mask"
+    if args.only:
+        kind = f"{args.only} only"
+    elif ycc:
+        kind += " in YCbCr"
     print(f"{width}x{height} @ {fps:.2f}fps, {total} frames, {kind}; buffering {fx.size} frames (~{mb:.0f} MB)")
 
     encoder = writer = None
     if not args.no_output:
-        output = args.output or default_output(args.input, mask_label, args.window, args.fast)
+        space_tag = f"{args.only}-only" if args.only else ("ycc" if ycc else None)
+        output = args.output or default_output(args.input, mask_label, args.window, args.fast, space_tag)
         output.parent.mkdir(parents=True, exist_ok=True)
         if shutil.which("ffmpeg"):
             encoder = open_encoder(output, args.input, width, height, fps)
@@ -242,7 +273,13 @@ def main():
         ok, frame = cap.read()
         if not ok:
             break
+        if ycc:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
         out = fx.push(frame)
+        if ycc:
+            # Values that mix brightness and color from different moments can fall outside
+            # RGB; the conversion clips them.
+            out = cv2.cvtColor(out, cv2.COLOR_YCrCb2BGR)
         if encoder:
             try:
                 encoder.stdin.write(out.data)
