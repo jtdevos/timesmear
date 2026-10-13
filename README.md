@@ -107,6 +107,13 @@ Wherever something moves, its red, green and blue copies separate into colored g
 cyan and yellow fringes and trails), and they come back together once the motion stops. Still
 areas look untouched.
 
+<p align="center">
+  <img src="docs/demo-color-plasma.gif" alt="Before and after: a dancer on the left, and on the right the same footage where her moving arms, legs and hair split into separate magenta, cyan, yellow and green ghosts" width="540">
+  <br>
+  <sub>Left: original. Right: <code>-t color-plasma --seed 7</code>, 1 s window.
+  Dance footage by Dana Margalit (<a href="https://www.tiktok.com/@d.margalit">@d.margalit</a> on TikTok).</sub>
+</p>
+
 - `-t color-plasma` generates a separate plasma cloud for each channel, so the color split
   varies across the frame.
 - You can paint one too. Pure black is "now" for every channel; pure red delays only the red
@@ -275,6 +282,6 @@ If you publish renders made from them, credit the original film.
 The demo GIF, `docs/demo.gif`, is made from *Tears of Steel* footage and is shared under the
 same CC-BY license.
 
-The dance demo, `docs/demo-dance.gif`, uses footage by Dana Margalit
+The dance demos, `docs/demo-dance.gif` and `docs/demo-color-plasma.gif`, use footage by Dana Margalit
 ([@d.margalit](https://www.tiktok.com/@d.margalit) on TikTok). The original video isn't
 included in this repo.
