@@ -68,8 +68,9 @@ uv run timedisplace.py resources/tears-of-steel.webm 1.5 -t plasma
 ```
 
 `bootstrap.sh` downloads three short reference clips and generates a set of mask images. The
-last command generates a plasma mask at the video's size and writes
-`resources/tears-of-steel_displaced.mp4`.
+last command generates a plasma mask at the video's size and writes something like
+`resources/tears-of-steel_plasma-seed1234_1.5s.mp4`. The filename records the settings, so you
+can tell renders apart and reproduce any of them.
 
 Every command prints full help with `-h`, or when you run it with no arguments.
 
@@ -140,12 +141,26 @@ uv run timedisplace.py INPUT WINDOW [-m MASK | -t TYPE] [options]
 | `-t, --mask-type` | Generate a mask at the video's size instead: `horizontal`, `vertical`, `radial`, `noise`, `plasma`, `color-plasma` or `color-radial` (see [makemask.py](#makemaskpy)). If neither `-m` nor `-t` is given, you get `radial`. |
 | `--seed` | Random seed for the `noise`, `plasma`, `color-plasma` and `color-radial` types. Without it, a random seed is chosen and printed so you can reproduce a result you like. |
 | `--roughness` | Detail level for the `plasma` and `color-plasma` types, from 0 to 1 (default 0.5) |
-| `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC (hardware-encoded on Macs). Defaults to `<input>_displaced.mp4` next to the input. |
+| `-o, --output` | Output path. `.webm` gives VP9/Opus; anything else gives H.264/AAC (hardware-encoded on Macs). Without it, the output goes next to the input, named after the settings (see below). |
 | `--fast` | Use the nearest frame instead of blending two |
 | `--preview` | Show the output in a window while rendering (press `q` to stop) |
 | `--no-output` | Use with `--preview` to watch without writing a file |
 
 The original audio is copied into the output, unchanged.
+
+Without `-o`, the output is named `<input>_<mask>_<window>s[_fast].mp4` and saved next to the
+input. For a generated mask, the name includes the seed (and `--roughness`, if it isn't the
+default), so any render can be reproduced from its filename:
+
+| Command | Output |
+|---|---|
+| `timedisplace.py dance.mp4 1` | `dance_radial_1s.mp4` |
+| `timedisplace.py dance.mp4 1.5 -t color-plasma --seed 7` | `dance_color-plasma-seed7_1.5s.mp4` |
+| `timedisplace.py dance.mp4 1.5 -t plasma --roughness 0.7` | `dance_plasma-seed<random>-rough0.7_1.5s.mp4` |
+| `timedisplace.py dance.mp4 3 -m mask-ghost.png --fast` | `dance_mask-ghost_3s_fast.mp4` |
+
+Running the same settings again overwrites the earlier file, since it would contain the same
+video.
 
 ## makemask.py
 

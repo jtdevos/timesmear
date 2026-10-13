@@ -157,6 +157,12 @@ def open_encoder(dest, original, width, height, fps):
     )
 
 
+def default_output(input_path, mask_label, window, fast):
+    """e.g. dance.mp4, color-plasma-seed7, 1.5, False -> dance_color-plasma-seed7_1.5s.mp4"""
+    parts = [input_path.stem, mask_label, f"{window:g}s"] + (["fast"] if fast else [])
+    return input_path.with_name("_".join(parts) + ".mp4")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, epilog=EXAMPLES,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -172,7 +178,8 @@ def main():
                    help="with -t plasma/color-plasma: 0-1, higher = more fine detail (default 0.5)")
     p.add_argument("-o", "--output", type=Path,
                    help="output video; .webm gives VP9/Opus, anything else H.264/AAC "
-                        "(default: <input>_displaced.mp4)")
+                        "(default: <input>_<mask>_<window>s[_fast].mp4 next to the input, "
+                        "e.g. dance_color-plasma-seed7_1.5s.mp4)")
     p.add_argument("--fast", action="store_true", help="use the nearest frame instead of blending two (slightly steppier motion)")
     p.add_argument("--preview", action="store_true", help="show frames in a window while rendering (q to quit)")
     p.add_argument("--no-output", action="store_true", help="with --preview: don't write a file")
@@ -195,16 +202,22 @@ def main():
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+    # mask_label names the mask in the default output filename.
     if args.mask:
         mask = load_mask(args.mask, width, height)
+        mask_label = args.mask.stem
     else:
         mask_type = args.mask_type or "radial"
-        desc = f"{mask_type} mask"
+        desc = mask_label = mask_type
         if mask_type in RANDOM_PATTERNS:
             seed = args.seed if args.seed is not None else random.randrange(2**31)
-            desc += f" (--seed {seed})"
+            desc += f" mask (--seed {seed})"
+            mask_label += f"-seed{seed}"
         else:
             seed = None
+            desc += " mask"
+        if mask_type in ("plasma", "color-plasma") and args.roughness != 0.5:
+            mask_label += f"-rough{args.roughness:g}"
         mask = make(mask_type, width, height, args.roughness, seed)
         print(f"generated {desc}")
     fx = TimeDisplacer(mask, args.window, fps, fast=args.fast)
@@ -214,7 +227,7 @@ def main():
 
     encoder = writer = None
     if not args.no_output:
-        output = args.output or args.input.with_name(f"{args.input.stem}_displaced.mp4")
+        output = args.output or default_output(args.input, mask_label, args.window, args.fast)
         output.parent.mkdir(parents=True, exist_ok=True)
         if shutil.which("ffmpeg"):
             encoder = open_encoder(output, args.input, width, height, fps)
